@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Spiral Microfluidic Chip — CFD Visualization</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{width:100%;height:100%;background:#000000;overflow:hidden;}
+canvas#c{display:block;width:100%;height:100%;}
+
+/* Title */
+#title{
+  position:absolute;top:20px;left:24px;pointer-events:none;
+  font:700 13px/1.6 'Segoe UI',Arial,sans-serif;
+  color:rgba(255,255,255,.95);letter-spacing:.05em;
+}
+#title small{
+  display:block;font:400 10px/1.5 'Segoe UI',Arial,sans-serif;
+  color:rgba(200,200,200,.72);letter-spacing:.07em;
+}
+
+/* Colorbar */
+#cbar{
+  position:absolute;top:50%;right:24px;transform:translateY(-50%);
+  display:flex;flex-direction:row;align-items:center;gap:10px;
+  pointer-events:none;
+}
+#cbar-inner{display:flex;flex-direction:column;align-items:center;gap:5px;}
+#cbar .cb-val{
+  font:11px 'Segoe UI',Arial,sans-serif;
+  color:rgba(210,210,210,.85);text-align:center;
+}
+#cbar canvas{border-radius:3px;border:1px solid rgba(120,120,120,.40);}
+#cbar .cb-lbl{
+  font:bold 9px 'Segoe UI',Arial,sans-serif;
+  color:rgba(190,190,190,.78);letter-spacing:.12em;
+  writing-mode:vertical-rl;transform:rotate(180deg);
+}
+
+/* Legend */
+#legend{
+  position:absolute;bottom:22px;right:24px;
+  background:rgba(0,0,0,.94);
+  border:1px solid rgba(80,80,80,.35);
+  border-radius:6px;padding:10px 14px 12px;
+  font:11px/1.0 'Segoe UI',Arial,sans-serif;
+  backdrop-filter:blur(12px);pointer-events:none;
+  min-width:270px;
+}
+.l-hdr{
+  font:700 9px 'Segoe UI',Arial,sans-serif;
+  color:rgba(200,200,200,.85);letter-spacing:.12em;
+  padding-bottom:6px;margin-bottom:6px;
+  border-bottom:1px solid rgba(100,100,100,.28);
+}
+.l-row{display:flex;align-items:flex-start;gap:9px;padding:3.5px 0;}
+.l-badge{
+  width:19px;height:19px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font:700 11px Arial,sans-serif;border:2px solid;
+  margin-top:1px;
+}
+.l-main{color:rgba(240,240,240,.90);font-size:11px;}
+.l-sub{color:rgba(170,170,170,.82);font-size:9.5px;margin-top:1px;}
+
+/* Controls hint */
+#hint{
+  position:absolute;bottom:16px;left:50%;transform:translateX(-50%);
+  font:9.5px 'Segoe UI',Arial,sans-serif;
+  color:rgba(160,160,160,.42);pointer-events:none;white-space:nowrap;
+}
+
+
+/* Save button */
+#save{
+  position:absolute;bottom:14px;left:22px;
+  background:rgba(0,0,0,.90);border:1px solid rgba(100,100,100,.45);
+  border-radius:4px;color:rgba(210,210,210,.80);
+  font:10.5px 'Segoe UI',Arial,sans-serif;
+  padding:5px 12px;cursor:pointer;letter-spacing:.03em;
+}
+#save:hover{background:rgba(30,30,30,.95);color:#ffffff;}
+
+/* View presets */
+#views{
+  position:absolute;top:20px;right:24px;
+  display:flex;flex-direction:column;gap:5px;
+  /* sits at top-right above colorbar */
+}
+.vbtn{
+  background:#000;border:1px solid #000;
+  border-radius:4px;color:#000;
+  font:10px 'Segoe UI',Arial,sans-serif;
+  padding:5px 11px;cursor:pointer;letter-spacing:.04em;text-align:center;
+  transition:background .15s,color .15s;
+}
+.vbtn:hover{background:#1a1a1a;color:#3a3a3a;}
+.vbtn.active{background:#000;border-color:#000;color:#555;}
+
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+
+<div id="title">
+  SPIRAL INERTIAL MICROFLUIDIC CHIP
+  <small>PDMS SOFT LITHOGRAPHY · 5-TURN ARCHIMEDEAN SPIRAL · ⌀19 mm</small>
+</div>
+
+
+<div id="cbar">
+  <div id="cbar-inner">
+    <div class="cb-val">44 kPa</div>
+    <canvas id="cbar-cv" width="20" height="240"></canvas>
+    <div class="cb-val">0 kPa</div>
+  </div>
+  <div class="cb-lbl">PRESSURE</div>
+</div>
+
+<div id="legend"><div class="l-hdr">KEY</div></div>
+
+<div id="hint">Drag · rotate &nbsp;|&nbsp; Scroll · zoom &nbsp;|&nbsp; Shift+drag · pan &nbsp;|&nbsp; Dbl-click · reset</div>
+<button id="save">Save PNG</button>
+
+<div id="views">
+  <button class="vbtn active" data-view="iso">ISOMETRIC</button>
+  <button class="vbtn" data-view="top">TOP</button>
+  <button class="vbtn" data-view="side">SIDE</button>
+</div>
+
+<script>
+"use strict";
+
+// Pressure colormap: p=0 dark grey, p=1 white
+function presColor(p){
+  p=Math.max(0,Math.min(1,p));
+  const v=0.35+p*0.65;
+  return[v,v,v];
+}
+// Build colorbar (top=high pressure/white, bottom=low/grey)
+;(function(){
+  const cv=document.getElementById('cbar-cv'),cc=cv.getContext('2d');
+  for(let y=0;y<240;y++){
+    const[r,g,b]=presColor(1-y/240);
+    cc.fillStyle=`rgb(${~~(r*255)},${~~(g*255)},${~~(b*255)})`;
+    cc.fillRect(0,y,14,1);
+  }
+})();
+
+// Canvas
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+function resize(){cv.width=window.innerWidth;cv.height=window.innerHeight;}
+resize();window.addEventListener('resize',resize);
+
+// Scene constants: R_OUT=430du = 7.5mm physical (1du ≈ 17.4µm); turn pitch 51.6du, W=32du (no overlap)
+const RO=430,RI=172,NT=5;
+const W=32,H=52,NSEG=400,FOC=950;
+
+// Camera: rx ≈ −35° pitch, ry ≈ 28° yaw
+let rx=-0.62,ry=0.48,zm=1.0,px=0,py=0;
+
+function proj(x,y,z){
+  const cy_=Math.cos(ry),sy_=Math.sin(ry);
+  const x1=x*cy_-z*sy_, z1=x*sy_+z*cy_;
+  const cx_=Math.cos(rx),sx_=Math.sin(rx);
+  const y2=y*cx_-z1*sx_, z2=y*sx_+z1*cx_;
+  const f=FOC/(FOC+z2);
+  return[cv.width/2+(x1*f+px)*zm, cv.height/2+(-y2*f+py)*zm, z2];
+}
+
+// Interaction
+let drag=false,shft=false,lx=0,ly=0;
+cv.addEventListener('mousedown',e=>{drag=true;shft=e.shiftKey;lx=e.clientX;ly=e.clientY;});
+cv.addEventListener('mousemove',e=>{
+  if(!drag)return;
+  const dx=e.clientX-lx,dy=e.clientY-ly;
+  shft?(px+=dx*.85,py+=dy*.85):(ry+=dx*.006,rx+=dy*.006);
+  lx=e.clientX;ly=e.clientY;
+});
+cv.addEventListener('mouseup',()=>drag=false);
+cv.addEventListener('mouseleave',()=>drag=false);
+cv.addEventListener('wheel',e=>{zm*=1-e.deltaY*.0007;zm=Math.max(.15,Math.min(4,zm));},{passive:true});
+cv.addEventListener('dblclick',()=>{animateTo(-0.62,0.48,1,0,0,'iso');});
+
+// View preset animations
+const VIEWS={
+  iso:  {rx:-0.62, ry:0.48,  zm:1,   px:0, py:0},
+  top:  {rx:-1.571,ry:0,     zm:1,   px:0, py:0},
+  side: {rx:0,     ry:0,     zm:1,   px:0, py:0},
+};
+function animateTo(trx,try_,tzm,tpx,tpy,id){
+  document.querySelectorAll('.vbtn').forEach(b=>b.classList.toggle('active',b.dataset.view===id));
+  const steps=28,start={rx,ry,zm,px,py};
+  let frame=0;
+  function tick(){
+    frame++;
+    const t=1-Math.pow(1-frame/steps,3); // ease-out cubic
+    rx=start.rx+(trx-start.rx)*t;
+    ry=start.ry+(try_-start.ry)*t;
+    zm=start.zm+(tzm-start.zm)*t;
+    px=start.px+(tpx-start.px)*t;
+    py=start.py+(tpy-start.py)*t;
+    if(frame<steps)requestAnimationFrame(tick);
+  }
+  tick();
+}
+document.querySelectorAll('.vbtn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    const v=VIEWS[btn.dataset.view];
+    animateTo(v.rx,v.ry,v.zm,v.px,v.py,btn.dataset.view);
+  });
+});
+
+// Phong lighting (world-space)
+// Key light: upper-right-front
+const _lw=[0.55,0.85,0.28];
+const _lm=Math.sqrt(_lw[0]*_lw[0]+_lw[1]*_lw[1]+_lw[2]*_lw[2]);
+const L=[_lw[0]/_lm,_lw[1]/_lm,_lw[2]/_lm]; // normalised world-space light
+
+function phong(nx,ny,nz){
+  return Math.min(1, 0.22 + 0.72*Math.max(0, nx*L[0]+ny*L[1]+nz*L[2]));
+}
+
+// Spiral geometry
+const verts=[];
+for(let i=0;i<=NSEG;i++){
+  const t=i/NSEG, th=t*2*Math.PI*NT, r=RO-(RO-RI)*t;
+  const nx=Math.cos(th),nz=Math.sin(th),ro=r+W/2,ri_=r-W/2;
+  verts.push({ot:[ro*nx,H/2,ro*nz], it:[ri_*nx,H/2,ri_*nz],
+              ob:[ro*nx,-H/2,ro*nz], ib:[ri_*nx,-H/2,ri_*nz], t,th,r,nx,nz});
+}
+
+const FACES=[];
+for(let i=0;i<NSEG;i++){
+  const A=verts[i],B=verts[i+1],tm=(A.t+B.t)*.5;
+  const thm=(A.th+B.th)*.5, onx=Math.cos(thm),onz=Math.sin(thm);
+  FACES.push({tp:'top',v:[A.ot,A.it,B.it,B.ot],tm,n:[0,1,0]});
+  FACES.push({tp:'bot',v:[A.ob,A.ib,B.ib,B.ob],tm,n:[0,-1,0]});
+  FACES.push({tp:'out',v:[A.ot,A.ob,B.ob,B.ot],tm,n:[onx,0,onz]});
+  FACES.push({tp:'in', v:[A.it,A.ib,B.ib,B.it],tm,n:[-onx,0,-onz]});
+}
+
+// Schematic particle trajectories (visual aid, not the quantitative model)
+// The animation settles PTFE (orange) toward the outer lane and PVDF (green)
+// toward the inner lane so the density-sorting concept is legible at device
+// scale; lane positions and settling rates below are presentation parameters.
+// The quantitative physics (inertial lift + centrifugal buoyancy, with Dean
+// drag cycle-averaging to zero) lives in make_figures.py. Predicted stable
+// equilibria: −34.0 / −50.4 µm (inner branch, PTFE / PVDF) and +67.0 / +65.0 µm
+// (outer branch); design splitter at y = −39.7 µm. See paper Figs 2–3, Table 3.
+
+// Animated particles
+let seed=0x7e3a09;
+function rng(){seed=(seed*1664525+1013904223)&0xffffffff;return(seed>>>0)/4294967296;}
+const PARS=[];
+for(let i=0;i<2100;i++){
+  PARS.push({jitter:(rng()-.5)*2.0, hj:(rng()-.5)*1.8, t:-rng()*1.55, spd:.00110+rng()*.00045, col:'#ff7a1a', id:'ptfe', tau:0.18, tauy:0.28});
+  PARS.push({jitter:(rng()-.5)*2.0, hj:(rng()-.5)*1.8, t:-rng()*1.55, spd:.00105+rng()*.00045, col:'#18c84a', id:'pvdf', tau:0.32, tauy:0.48});
+}
+
+const TRAJ_N=400;
+function buildTraj(u_eq,tau_lat,y_eq_frac,tau_y){
+  // u_eq: signed lateral equilibrium as fraction of (W/2−3) [+outer, −inner]
+  // tau_lat: lateral focusing arc-length constant (fraction of total spiral)
+  // y_eq_frac: height equilibrium as fraction of H/2
+  // tau_y: height focusing constant
+  const pts=[];
+  for(let i=0;i<=TRAJ_N;i++){
+    const t=i/TRAJ_N;
+    const th=t*2*Math.PI*NT, r_cl=RO-(RO-RI)*t;
+    const lat=u_eq*(W/2-3)*(1-Math.exp(-t/tau_lat));
+    const y=(H/2)*y_eq_frac*(1-Math.exp(-t/tau_y));
+    pts.push([(r_cl+lat)*Math.cos(th), y, (r_cl+lat)*Math.sin(th)]);
+  }
+  return pts;
+}
+// Outlet extension: particles continue to their respective outlets
+function buildTrajOutlet(u_eq_lat, y_eq_frac, rSign){
+  const pts=[];
+  const NOP=60, _OL=58, _BW=2.5;
+  for(let i=0;i<=NOP;i++){
+    const op=i/NOP;
+    const x=RI+rSign*(_BW+(W/2-_BW)*Math.abs(u_eq_lat));
+    const y=(H/2)*y_eq_frac;
+    pts.push([x, y, op*_OL]);
+  }
+  return pts;
+}
+const TRAJ_PTFE=[...buildTraj(+0.78,0.18,0.67,0.28), ...buildTrajOutlet(0.78,0.67,+1)];
+const TRAJ_PVDF=[...buildTraj(-0.72,0.32,0.65,0.48), ...buildTrajOutlet(0.72,0.65,-1)];
+
+function pPos(p){
+  const t=p.t, traj=p.id==='ptfe'?TRAJ_PTFE:TRAJ_PVDF;
+  // Map t(0..1 spiral, 1..1.6 outlet) → trajectory index
+  let idx = t<=1.0 ? t*TRAJ_N : TRAJ_N+1+((t-1.0)/0.6)*60;
+  idx=Math.max(0,Math.min(traj.length-2,idx));
+  const i=Math.floor(idx),f=idx-i;
+  const[x0,y0,z0]=traj[i],[x1,y1,z1]=traj[i+1]||traj[i];
+  const bx=x0+(x1-x0)*f, by=y0+(y1-y0)*f, bz=z0+(z1-z0)*f;
+  if(t>1.0)return[bx,by,bz];
+  // Lateral + height jitter both decay → chaotic inlet, focused outlet
+  const th=t*2*Math.PI*NT;
+  const spread=p.jitter*(W/2-4)*Math.exp(-t/p.tau);
+  const hy=p.hj*(H/2-2)*Math.exp(-t/p.tauy);
+  return[bx+spread*Math.cos(th), by+hy, bz+spread*Math.sin(th)];
+}
+function drawParticle(p){
+  const[x,y,z]=pPos(p),[sx,sy,sz]=proj(x,y,z);
+  const fade=Math.max(.45,Math.min(1,1-sz/2200));
+  ctx.beginPath();ctx.arc(sx,sy,5.0*fade,0,2*Math.PI);
+  ctx.fillStyle=p.col;ctx.globalAlpha=fade;ctx.fill();ctx.globalAlpha=1;
+}
+
+function drawTrajSeg(it){
+  const[x1,y1]=proj(...it.p1),[x2,y2]=proj(...it.p2);
+  ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);
+  ctx.strokeStyle=it.col;ctx.lineWidth=2.2;ctx.stroke();
+}
+
+// Static geometry
+const CR=RO*1.105,GY=-H/2-22;
+const DISC=Array.from({length:140},(_,k)=>{
+  const a=k/139*2*Math.PI;return[CR*Math.cos(a),GY,CR*Math.sin(a)];
+});
+const thE=NT*2*Math.PI,nxE=Math.cos(thE),nzE=Math.sin(thE);
+
+// Outlet bifurcation geometry
+// Spiral ends at (RI,0,0); flow exits in +Z. outp(rad,tang,y): x=RI+rad, y=height, z=tang
+const OL=58,BW=2.5; // outlet length, bifurcation wall half-width (both in display units)
+function outp(rad,tang,y){return[RI+rad,y,tang];}
+
+const OUTLET_FACES=[];
+(function(){
+  // PTFE channel: outer sub-channel [+BW, +W/2] radially, z=0..OL
+  OUTLET_FACES.push({tp:'ptfe',v:[outp(BW,0,H/2),outp(W/2,0,H/2),outp(W/2,OL,H/2),outp(BW,OL,H/2)],n:[0,1,0]});
+  OUTLET_FACES.push({tp:'ptfe',v:[outp(BW,0,-H/2),outp(BW,OL,-H/2),outp(W/2,OL,-H/2),outp(W/2,0,-H/2)],n:[0,-1,0]});
+  OUTLET_FACES.push({tp:'ptfe',v:[outp(W/2,0,H/2),outp(W/2,0,-H/2),outp(W/2,OL,-H/2),outp(W/2,OL,H/2)],n:[1,0,0]});
+  OUTLET_FACES.push({tp:'ptfe',v:[outp(BW,OL,H/2),outp(W/2,OL,H/2),outp(W/2,OL,-H/2),outp(BW,OL,-H/2)],n:[0,0,1]});
+  // PVDF channel: inner sub-channel [-W/2, -BW] radially, z=0..OL
+  OUTLET_FACES.push({tp:'pvdf',v:[outp(-W/2,0,H/2),outp(-BW,0,H/2),outp(-BW,OL,H/2),outp(-W/2,OL,H/2)],n:[0,1,0]});
+  OUTLET_FACES.push({tp:'pvdf',v:[outp(-W/2,0,-H/2),outp(-W/2,OL,-H/2),outp(-BW,OL,-H/2),outp(-BW,0,-H/2)],n:[0,-1,0]});
+  OUTLET_FACES.push({tp:'pvdf',v:[outp(-W/2,0,H/2),outp(-W/2,OL,H/2),outp(-W/2,OL,-H/2),outp(-W/2,0,-H/2)],n:[-1,0,0]});
+  OUTLET_FACES.push({tp:'pvdf',v:[outp(-BW,OL,H/2),outp(-W/2,OL,H/2),outp(-W/2,OL,-H/2),outp(-BW,OL,-H/2)],n:[0,0,1]});
+  // Bifurcation splitter wall: [-BW, +BW] radially, z=0..OL
+  OUTLET_FACES.push({tp:'bif',v:[outp(-BW,0,H/2),outp(BW,0,H/2),outp(BW,OL,H/2),outp(-BW,OL,H/2)],n:[0,1,0]});
+  OUTLET_FACES.push({tp:'bif',v:[outp(-BW,0,-H/2),outp(-BW,OL,-H/2),outp(BW,OL,-H/2),outp(BW,0,-H/2)],n:[0,-1,0]});
+  OUTLET_FACES.push({tp:'bif',v:[outp(BW,0,H/2),outp(BW,0,-H/2),outp(BW,OL,-H/2),outp(BW,OL,H/2)],n:[1,0,0]});
+  OUTLET_FACES.push({tp:'bif',v:[outp(-BW,0,H/2),outp(-BW,OL,H/2),outp(-BW,OL,-H/2),outp(-BW,0,-H/2)],n:[-1,0,0]});
+  OUTLET_FACES.push({tp:'bif',v:[outp(-BW,OL,H/2),outp(BW,OL,H/2),outp(BW,OL,-H/2),outp(-BW,OL,-H/2)],n:[0,0,1]});
+})();
+
+// Draw functions
+function drawFace(f){
+  const p2=f.v.map(v=>proj(...v));
+  ctx.beginPath();p2.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.closePath();
+  const[nx,ny,nz]=f.n;
+  const br=phong(nx,ny,nz);  // 0.22..0.94 depending on face angle vs light
+
+  switch(f.tp){
+    case'top':{
+      const[r,g,b]=presColor(1-f.tm);
+      ctx.fillStyle=`rgba(${~~(r*255)},${~~(g*255)},${~~(b*255)},.28)`;ctx.fill();
+      ctx.strokeStyle=`rgba(${~~(r*255)},${~~(g*255)},${~~(b*255)},.68)`;ctx.lineWidth=.70;ctx.stroke();
+      break;
+    }
+    case'out':{
+      const p=1-f.tm;
+      const lum=Math.min(1, 0.18+br*0.58+p*0.12);
+      ctx.fillStyle=`rgba(${~~(lum*255)},${~~(lum*255)},${~~(lum*255)},.62)`;ctx.fill();
+      ctx.strokeStyle=`rgba(220,220,220,${(br*0.28+0.07).toFixed(2)})`;ctx.lineWidth=.55;ctx.stroke();
+      break;
+    }
+    case'in':{
+      const p=1-f.tm;
+      const lum=Math.min(1, 0.14+br*0.52+p*0.10);
+      ctx.fillStyle=`rgba(${~~(lum*255)},${~~(lum*255)},${~~(lum*255)},.58)`;ctx.fill();
+      ctx.strokeStyle=`rgba(210,210,210,${(br*0.22+0.05).toFixed(2)})`;ctx.lineWidth=.45;ctx.stroke();
+      break;
+    }
+    case'bot':
+      ctx.fillStyle='rgba(3,8,18,.05)';ctx.fill();break;
+    case'ptfe':{
+      const br=phong(f.n[0],f.n[1],f.n[2]);
+      const rv=~~(0.88*br*255+12),gv=~~(0.48*br*255+7),bv=~~(0.06*br*255+2);
+      ctx.fillStyle=`rgba(${rv},${gv},${bv},.80)`;ctx.fill();
+      ctx.strokeStyle=`rgba(255,160,60,.30)`;ctx.lineWidth=.5;ctx.stroke();
+      break;
+    }
+    case'pvdf':{
+      const br=phong(f.n[0],f.n[1],f.n[2]);
+      const rv=~~(0.08*br*255+3),gv=~~(0.70*br*255+14),bv=~~(0.14*br*255+5);
+      ctx.fillStyle=`rgba(${rv},${gv},${bv},.80)`;ctx.fill();
+      ctx.strokeStyle=`rgba(30,200,80,.30)`;ctx.lineWidth=.5;ctx.stroke();
+      break;
+    }
+    case'bif':{
+      const br=phong(f.n[0],f.n[1],f.n[2]);
+      const v=~~(Math.min(1,0.30+br*0.70)*255);
+      ctx.fillStyle=`rgba(${v},${v},${v},.92)`;ctx.fill();
+      ctx.strokeStyle=`rgba(245,245,245,.65)`;ctx.lineWidth=.9;ctx.stroke();
+      break;
+    }
+  }
+}
+
+
+function drawPort(bx,by_,bz,col,tR){
+  // Glowing ring on chip face
+  const NSPT=32;
+  const rim=Array.from({length:NSPT+1},(_,k)=>{
+    const a=k/NSPT*2*Math.PI;
+    return[bx+Math.cos(a)*tR,by_,bz+Math.sin(a)*tR];
+  });
+  // Filled disc (soft glow base)
+  ctx.beginPath();
+  rim.forEach(([rx_,ry_,rz_],i)=>{const[sx,sy]=proj(rx_,ry_,rz_);i?ctx.lineTo(sx,sy):ctx.moveTo(sx,sy);});
+  ctx.closePath();ctx.globalAlpha=.16;ctx.fillStyle=col;ctx.fill();ctx.globalAlpha=1;
+  // Bright rim ring
+  ctx.beginPath();ctx.shadowBlur=14;ctx.shadowColor=col;
+  ctx.strokeStyle=col;ctx.lineWidth=1.8;
+  rim.forEach(([rx_,ry_,rz_],i)=>{const[sx,sy]=proj(rx_,ry_,rz_);i?ctx.lineTo(sx,sy):ctx.moveTo(sx,sy);});
+  ctx.closePath();ctx.stroke();ctx.shadowBlur=0;
+}
+
+// Channel tube glow lines, drawn after painter sort so they always appear crisp.
+function drawChannelTube(){
+  ctx.save();
+  // Draw outer + inner wall top-edge lines as CoolWarm glow traces
+  for(let side=0;side<2;side++){
+    const sg=side?-1:1; // +1=outer, -1=inner
+    for(let i=0;i<NSEG;i++){
+      const t0=i/NSEG,t1=(i+1)/NSEG;
+      const th0=t0*2*Math.PI*NT,r0=RO-(RO-RI)*t0;
+      const th1=t1*2*Math.PI*NT,r1=RO-(RO-RI)*t1;
+      const[x0,y0]=proj((r0+sg*W/2)*Math.cos(th0),H/2,(r0+sg*W/2)*Math.sin(th0));
+      const[x1,y1]=proj((r1+sg*W/2)*Math.cos(th1),H/2,(r1+sg*W/2)*Math.sin(th1));
+      const[cr,cg,cb]=presColor(1-t0);
+      ctx.beginPath();ctx.moveTo(x0,y0);ctx.lineTo(x1,y1);
+      ctx.strokeStyle=`rgba(${~~(cr*255)},${~~(cg*255)},${~~(cb*255)},.62)`;
+      ctx.shadowColor =`rgba(${~~(cr*255)},${~~(cg*255)},${~~(cb*255)},.40)`;
+      ctx.shadowBlur=7;ctx.lineWidth=1.0;ctx.stroke();
+    }
+  }
+  ctx.shadowBlur=0;ctx.restore();
+}
+
+// Callout system: all badges share one colour, readable against any background.
+const BADGE_COL='#a8d4f8'; // soft powder-blue (lighter than B's #90c8f0)
+const BADGE_RGBA='rgba(168,212,248,'; // BADGE_COL as rgba prefix
+
+const CALLS=[
+  ['A','#00e8c0', ()=>[RO, 0, 0]],
+  ['B','#e03020', ()=>{const ci=Math.round(.13*NSEG),h=1;let x=0,y=0,z=0,n=0;for(let k=-h;k<=h;k++){const i=Math.max(0,Math.min(NSEG-1,ci+k));if(!verts[i+1])continue;[verts[i].ot,verts[i].ob,verts[i+1].ob,verts[i+1].ot].forEach(p=>{x+=p[0];y+=p[1];z+=p[2];n++;});}return[x/n,y/n,z/n];},[0,0,true]],
+  ['C','#ffd840', ()=>{const i=Math.min(Math.round(.290*NSEG),NSEG);const ps=[verts[i].ib,verts[i].ob,verts[i].ot,verts[i].it];return[ps.reduce((s,p)=>s+p[0],0)/4,ps.reduce((s,p)=>s+p[1],0)/4,ps.reduce((s,p)=>s+p[2],0)/4];},[0,0,true]],
+  ['D','#ff7a1a', ()=>{const ci=Math.round(.52*NSEG),h=2;let x=0,y=0,z=0,n=0;for(let k=-h;k<=h;k++){const i=Math.max(0,Math.min(NSEG-1,ci+k));if(!verts[i+1])continue;[verts[i].ot,verts[i].ob,verts[i+1].ob,verts[i+1].ot].forEach(p=>{x+=p[0];y+=p[1];z+=p[2];n++;});}return[x/n,y/n,z/n];}],
+  ['E','#18c84a', ()=>{const ci=Math.round(.52*NSEG),h=2;let x=0,y=0,z=0,n=0;for(let k=-h;k<=h;k++){const i=Math.max(0,Math.min(NSEG-1,ci+k));if(!verts[i+1])continue;[verts[i].it,verts[i].ib,verts[i+1].ib,verts[i+1].it].forEach(p=>{x+=p[0];y+=p[1];z+=p[2];n++;});}return[x/n,y/n,z/n];},[0,0,true]],
+  ['F','#ff7a1a', ()=>outp((BW+W/2)*.5,OL*.50,0),[0,0,false,false,96]],
+  ['G','#18c84a', ()=>outp(-(BW+W/2)*.5,OL*.50,0),[0,0,true,false,96]],
+  ['H','#d8d8d8', ()=>outp(0,OL*.50,H/2),[0,-52,false,true]],
+];
+
+function drawSurfaceHighlights(){
+  // Filled cross-section end-cap (channel width × height) at a given t
+  function crossSection(tCenter,fillCol,strokeCol){
+    const i=Math.min(Math.round(tCenter*NSEG),NSEG);
+    const v=verts[i];
+    const p2=[v.ib,v.ob,v.ot,v.it].map(p=>proj(...p));
+    ctx.beginPath();p2.forEach(([x,y],j)=>j?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.closePath();
+    ctx.fillStyle=fillCol;ctx.fill();
+    ctx.shadowBlur=8;ctx.shadowColor=strokeCol;
+    ctx.strokeStyle=strokeCol;ctx.lineWidth=2.0;ctx.stroke();
+    ctx.shadowBlur=0;
+  }
+  // N consecutive outer or inner wall quads
+  function wallQuads(tCenter,side,fillCol,strokeCol,count=3){
+    const ci=Math.round(tCenter*NSEG), h=Math.floor(count/2);
+    for(let k=-h;k<=h;k++){
+      const i=Math.max(0,Math.min(NSEG-1,ci+k));
+      const A=verts[i],B=verts[i+1];
+      const v=side==='out'?[A.ot,A.ob,B.ob,B.ot]:[A.it,A.ib,B.ib,B.it];
+      const p2=v.map(p=>proj(...p));
+      ctx.beginPath();p2.forEach(([x,y],j)=>j?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.closePath();
+      ctx.fillStyle=fillCol;ctx.fill();
+      ctx.strokeStyle=strokeCol;ctx.lineWidth=1.4;ctx.stroke();
+    }
+  }
+  // A: filled cross-section at inlet (t=0)
+  crossSection(0,'rgba(0,232,192,.32)','rgba(0,232,192,.85)');
+  // B: 3 outer-wall quads, red
+  wallQuads(0.13,'out','rgba(220,50,30,.40)','rgba(255,90,60,.88)',5);
+  // C: filled cross-section at t=0.34 (shows channel width × height profile)
+  crossSection(0.290,'rgba(255,220,40,.28)','rgba(255,220,40,.92)');
+  // E: inner wall, stroke-only so orange D fill never mixes with green
+  wallQuads(0.52,'in','rgba(24,200,74,.44)','rgba(50,230,100,.95)',5);
+  // D: outer wall, solid fill on top
+  wallQuads(0.52,'out','rgba(255,122,26,.50)','rgba(255,170,60,.95)',5);
+}
+
+function drawCallouts(){
+  const BR=13;
+  const sw=cv.width/2, sh=cv.height/2;
+  const[cex]=proj(CR,GY,0);
+  const chipR=Math.abs(cex-sw);
+  const MARGIN=68;
+  const MINBR=BR*2+12; // minimum badge centre-to-centre gap
+
+  // Pass 1: initial badge positions (same outward-from-centre rule)
+  const items=CALLS.map(([ltr,col,afn,opts])=>{
+    const a3=afn();
+    const[sx,sy]=proj(...a3);
+    const dx=sx-sw, dy=sy-sh;
+    const dm=Math.sqrt(dx*dx+dy*dy)+.001;
+    const ux=dx/dm, uy=dy/dm;
+    const nx=opts?opts[0]:0, ny=opts?opts[1]:0;
+    let bx,by;
+    if(opts&&opts[4]){
+      // Fixed pixel distance from anchor in outward (or inward if flip) direction
+      const FL=opts[4], sign=(opts&&opts[2])?-1:1;
+      bx=sx+sign*ux*FL+nx; by=sy+sign*uy*FL+ny;
+    } else if(opts&&opts[3]){
+      // Anchor-relative: badge placed at fixed pixel offset from anchor
+      bx=sx+nx; by=sy+ny;
+    } else if(opts&&opts[2]){
+      // Flipped: short line inward from anchor toward chip centre
+      const LINE=MARGIN+28;
+      bx=sx-ux*LINE+nx; by=sy-uy*LINE+ny;
+    } else {
+      const dist=Math.max(dm,chipR*.70)+MARGIN;
+      bx=sw+ux*dist+nx; by=sh+uy*dist+ny;
+    }
+    return{ltr,col,a3,sx,sy,bx,by};
+  });
+
+  // Pass 2: badge-badge repulsion (25 iterations, symmetric push)
+  for(let iter=0;iter<25;iter++){
+    for(let i=0;i<items.length;i++){
+      for(let j=i+1;j<items.length;j++){
+        const dx=items[j].bx-items[i].bx, dy=items[j].by-items[i].by;
+        const d=Math.sqrt(dx*dx+dy*dy)+.001;
+        if(d<MINBR){
+          const push=(MINBR-d)*.55, nx=dx/d, ny=dy/d;
+          items[i].bx-=nx*push; items[i].by-=ny*push;
+          items[j].bx+=nx*push; items[j].by+=ny*push;
+        }
+      }
+    }
+  }
+
+  // Pass 3: avoid KEY legend box (bottom-right; CSS: bottom:22 right:24 width≈296 height≈380)
+  const kx1=cv.width-320-BR, ky1=cv.height-400-BR;
+  items.forEach(it=>{
+    if(it.bx>kx1 && it.by>ky1) it.by=ky1-BR-6;
+  });
+
+  // Pass 4: draw leader lines and badges
+  const NO_DOT=new Set(['A','B','C','D','E','F','G','H']);
+  for(const{ltr,col,a3,bx,by}of items){
+    const[anx,any]=proj(...a3);
+
+    // Leader line
+    const ex=anx+(bx-anx)*.38, ey=any+(by-any)*.38;
+    ctx.beginPath();ctx.strokeStyle=col;ctx.lineWidth=1.4;ctx.globalAlpha=.70;
+    ctx.moveTo(anx,any);ctx.lineTo(ex,ey);ctx.lineTo(bx,by);ctx.stroke();ctx.globalAlpha=1;
+
+    // Anchor dot only for callouts without a surface highlight
+    if(!NO_DOT.has(ltr)){
+      ctx.beginPath();ctx.arc(anx,any,5.5,0,2*Math.PI);
+      ctx.fillStyle=col;ctx.shadowBlur=12;ctx.shadowColor=col;ctx.fill();ctx.shadowBlur=0;
+      ctx.beginPath();ctx.arc(anx,any,2.2,0,2*Math.PI);
+      ctx.fillStyle='rgba(255,255,255,.95)';ctx.fill();
+    }
+
+    // Badge: white fill + per-callout colored ring
+    ctx.beginPath();ctx.arc(bx,by,BR,0,2*Math.PI);
+    ctx.fillStyle='rgba(255,255,255,.98)';ctx.fill();
+    ctx.shadowBlur=18;ctx.shadowColor=col;
+    ctx.strokeStyle=col;ctx.lineWidth=2.8;ctx.stroke();
+    ctx.shadowBlur=0;
+
+    // Bold dark letter
+    ctx.fillStyle='rgba(4,8,22,.94)';ctx.font='800 12px Arial,sans-serif';
+    ctx.textAlign='center';ctx.fillText(ltr,bx,by+4.5);ctx.textAlign='left';
+  }
+}
+
+// Legend population
+const LEG=[
+  {type:'row',l:'A',c:'#00e8c0',m:'Inlet',           s:'Q = 3.3 mL/min · ΔP ≈ 44 kPa · ∅ 1 mm port'},
+  {type:'row',l:'B',c:'#e03020',m:'5-turn Archimedean spiral',s:'Re ≈ 151 · De = 21–33 · L = 165 mm · laminar'},
+  {type:'row',l:'C',c:'#ffd840',m:'500 × 200 µm channel',s:'Rectangular cross-section · SU-8 vertical walls'},
+  {type:'sep'},
+  {type:'row',l:'D',c:'#ff7a1a',m:'PTFE  ρ = 2200 kg/m³',s:'Centrifugal buoyancy → outer wall · y* = +67 µm'},
+  {type:'row',l:'E',c:'#18c84a',m:'PVDF  ρ = 1780 kg/m³',s:'Lower buoyancy → inner lane · y* = −50.4 µm'},
+  {type:'sep'},
+  {type:'row',l:'F',c:'#ff7a1a',m:'PTFE outlet channel', s:'∅ 0.5 mm port · denser species exits outer lane'},
+  {type:'row',l:'G',c:'#18c84a',m:'PVDF outlet channel', s:'∅ 0.5 mm port · lighter species exits inner lane'},
+  {type:'row',l:'H',c:'#d8d8d8',m:'Bifurcation splitter wall',s:'PDMS wall between streams · splitter at y = −39.7 µm'},
+];
+const lgEl=document.getElementById('legend');
+LEG.forEach(item=>{
+  if(item.type==='sep'){
+    const sep=document.createElement('div');
+    sep.style.cssText='height:1px;background:rgba(60,120,200,.10);margin:4px 0 3px';
+    lgEl.appendChild(sep);return;
+  }
+  const d=document.createElement('div');d.className='l-row';
+  d.innerHTML=`<div class="l-badge" style="color:rgba(4,8,22,.94);background:rgba(255,255,255,.98);border-color:${item.c};box-shadow:0 0 7px ${item.c}99">${item.l}</div>`+
+              `<div><div class="l-main">${item.m}</div><div class="l-sub">${item.s}</div></div>`;
+  lgEl.appendChild(d);
+});
+
+// Scale bar
+function drawScaleBar(){
+  const mmPx=RO/7.5;   // 1mm physical in display units
+  const bx=cv.width/2-mmPx/2, by=cv.height-34;
+  ctx.strokeStyle='rgba(180,215,245,.32)';ctx.lineWidth=1.1;
+  ctx.beginPath();ctx.moveTo(bx,by);ctx.lineTo(bx+mmPx,by);ctx.stroke();
+  [[bx,by],[bx+mmPx,by]].forEach(([ex,ey])=>{
+    ctx.beginPath();ctx.moveTo(ex,ey-4);ctx.lineTo(ex,ey+4);ctx.stroke();
+  });
+  ctx.fillStyle='rgba(155,195,230,.38)';
+  ctx.font='9px Segoe UI,Arial,sans-serif';ctx.textAlign='center';
+  ctx.fillText('1 mm',bx+mmPx/2,by+13);ctx.textAlign='left';
+}
+
+// Axis gizmo
+function drawAxes(){
+  const ox=78,oy=cv.height-72;
+  [['X','#c05050',[1,0,0]],['Y','#40a860',[0,1,0]],['Z','#3868c8',[0,0,1]]].forEach(([l,c,[dx,dy,dz]])=>{
+    const[ex,ey]=proj(dx*58,dy*58,dz*58),[x0,y0]=proj(0,0,0);
+    const vx=(ex-x0)*.74,vy=(ey-y0)*.74;
+    ctx.beginPath();ctx.strokeStyle=c;ctx.lineWidth=1.5;ctx.shadowBlur=4;ctx.shadowColor=c;
+    ctx.moveTo(ox,oy);ctx.lineTo(ox+vx,oy+vy);ctx.stroke();
+    ctx.fillStyle=c;ctx.font='10px Segoe UI,Arial,sans-serif';ctx.fillText(l,ox+vx+3,oy+vy+3);
+    ctx.shadowBlur=0;
+  });
+}
+
+// Main draw
+function draw(){
+  ctx.clearRect(0,0,cv.width,cv.height);
+
+  ctx.fillStyle='#000000';ctx.fillRect(0,0,cv.width,cv.height);
+
+  // Subtle floor grid
+  const GR=CR+70;
+  for(let v=-GR;v<GR;v+=55){
+    const[ax,ay]=proj(-GR,GY-14,v),[bx,by]=proj(GR,GY-14,v);
+    ctx.beginPath();ctx.globalAlpha=.04;ctx.strokeStyle='#ffffff';ctx.lineWidth=.5;
+    ctx.moveTo(ax,ay);ctx.lineTo(bx,by);ctx.stroke();ctx.globalAlpha=1;
+    const[ax2,ay2]=proj(v,GY-14,-GR),[bx2,by2]=proj(v,GY-14,GR);
+    ctx.beginPath();ctx.globalAlpha=.04;ctx.moveTo(ax2,ay2);ctx.lineTo(bx2,by2);ctx.stroke();ctx.globalAlpha=1;
+  }
+
+  // Chip disc, PDMS body
+  ctx.beginPath();ctx.globalAlpha=.80;
+  DISC.forEach(([dx,dy,dz],i)=>{const[sx,sy]=proj(dx,dy,dz);i?ctx.lineTo(sx,sy):ctx.moveTo(sx,sy);});
+  ctx.closePath();
+  ctx.fillStyle='rgba(12,14,18,.82)';ctx.fill();ctx.globalAlpha=1;
+
+  // Painter-sort all faces + particles
+  const items=[];
+  for(const f of FACES){
+    const cx=(f.v[0][0]+f.v[1][0]+f.v[2][0]+f.v[3][0])*.25;
+    const cy=(f.v[0][1]+f.v[1][1]+f.v[2][1]+f.v[3][1])*.25;
+    const cz=(f.v[0][2]+f.v[1][2]+f.v[2][2]+f.v[3][2])*.25;
+    const[,,pz]=proj(cx,cy,cz);items.push({k:'f',f,pz});
+  }
+  for(const f of OUTLET_FACES){
+    const cx=(f.v[0][0]+f.v[1][0]+f.v[2][0]+f.v[3][0])*.25;
+    const cy=(f.v[0][1]+f.v[1][1]+f.v[2][1]+f.v[3][1])*.25;
+    const cz=(f.v[0][2]+f.v[1][2]+f.v[2][2]+f.v[3][2])*.25;
+    const[,,pz]=proj(cx,cy,cz);items.push({k:'f',f,pz});
+  }
+  for(const p of PARS){if(p.t<0)continue;const[x,y,z]=pPos(p);const[,,pz]=proj(x,y,z);items.push({k:'p',p,pz});}
+  items.sort((a,b)=>b.pz-a.pz);
+  for(const it of items){it.k==='f'?drawFace(it.f):it.k==='traj'?drawTrajSeg(it):drawParticle(it.p);}
+
+  // Glowing tube-wall traces (drawn over geometry for a crisp tube boundary)
+  drawChannelTube();
+
+  // Surface highlights for callouts B/C/D/E
+  drawSurfaceHighlights();
+
+  // Callout badges
+  drawCallouts();
+
+  // Scale bar + axes
+  drawScaleBar();
+  drawAxes();
+}
+
+// Animation
+let running=true;
+function loop(){
+  if(!running)return;
+  PARS.forEach(p=>{p.t+=p.spd;if(p.t>=1.55)p.t-=1.55;});
+  draw();requestAnimationFrame(loop);
+}
+loop();
+cv.addEventListener('mousedown',()=>running=false);
+cv.addEventListener('mouseup',()=>{running=true;loop();});
+cv.addEventListener('mouseleave',()=>{running=true;loop();});
+
+
+// Save
+document.getElementById('save').addEventListener('click',()=>{
+  running=false;draw();
+  const a=document.createElement('a');a.download='fig1_device_3d.png';a.href=cv.toDataURL('image/png');a.click();
+  running=true;loop();
+});
+</script>
+</body>
+</html>
